@@ -43,25 +43,40 @@ exports.getClientProfile = async (req, res) => {
       const today = new Date();
       const start = new Date(loan.startDate);
 
-      // Calculate elapsed days for EMI logic
+      // NEXT DAY LOGIC: 
+      // Math.floor ensures that if less than 24 hours have passed, elapsedDays is 0.
+      // Example: Loan given today at 2 PM. Tomorrow at 3 PM, elapsedDays = 1.
       const elapsedDays = Math.floor((today - start) / (1000 * 60 * 60 * 24));
 
       if (loan.type === 'EMI') {
+        // Only start counting EMIs if at least 1 full day has passed
         loanObj.expectedEmis = elapsedDays > 0 ? elapsedDays : 0;
+        
+        // Actual EMIs paid based on total money received
         loanObj.actualEmisPaid = Math.floor(loan.paidAmount / loan.dailyKist);
+        
+        // Calculate missed EMIs
         loanObj.missedEmis = loanObj.expectedEmis > loanObj.actualEmisPaid
           ? loanObj.expectedEmis - loanObj.actualEmisPaid
           : 0;
+          
+        // Defaulted if they have missed at least 1 EMI
         loanObj.isDefaulted = loanObj.missedEmis > 0;
       } else {
         // Fixed Loan Logic: Defaulted if today is past dueDate and not fully paid
-        loanObj.isDefaulted = loan.dueDate && today > new Date(loan.dueDate) && loan.paidAmount < loan.totalRepayable;
+        const isPastDue = loan.dueDate && today > new Date(loan.dueDate);
+        const isUnpaid = loan.paidAmount < loan.totalRepayable;
+        loanObj.isDefaulted = isPastDue && isUnpaid;
       }
       return loanObj;
     });
 
-    // Sort: Defaulted/Missed loans come first
-    loans.sort((a, b) => (b.isDefaulted === a.isDefaulted) ? 0 : b.isDefaulted ? 1 : -1);
+    // --- PRIORITY SORTING ---
+    // Defaulted (Missed/Overdue) loans move to the top of the profile list
+    loans.sort((a, b) => {
+      if (a.isDefaulted === b.isDefaulted) return 0;
+      return a.isDefaulted ? -1 : 1; 
+    });
 
     res.status(200).json({ client, loans });
   } catch (error) {
