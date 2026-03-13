@@ -19,7 +19,8 @@ const AddLoan = ({ onCancel, onAddClient }) => {
     days: '',
     dueDate: '',
     startDate: new Date().toISOString().split('T')[0], // Default to Today
-    initialPaidAmount: ''
+    initialPaidAmount: '',
+    security: ''
   });
 
   // Fetch real clients from your MongoDB Atlas cluster
@@ -73,9 +74,14 @@ const AddLoan = ({ onCancel, onAddClient }) => {
     return 0;
   };
 
+
+  // Calculate how many days have passed since the day AFTER the start date
+  const startDateObj = new Date(formData.startDate);
+  const nextDay = new Date(startDateObj);
+  nextDay.setDate(nextDay.getDate() + 1); // EMI officially starts the next day
   // Calculate how many days have passed since the start date
-  const elapsedDays = Math.floor((new Date() - new Date(formData.startDate)) / (1000 * 60 * 60 * 24));
-  const expectedEmis = elapsedDays > 0 ? elapsedDays : 0;
+  const elapsedDays = Math.floor((new Date() - nextDay) / (1000 * 60 * 60 * 24));
+  const expectedEmis = elapsedDays >= 0 ? elapsedDays + 1 : 0;
   const missedEmis = expectedEmis > (Number(formData.initialPaidAmount) || 0)
     ? expectedEmis - (Number(formData.initialPaidAmount) || 0)
     : 0;
@@ -105,6 +111,7 @@ const AddLoan = ({ onCancel, onAddClient }) => {
         totalRepayable: Number(formData.totalRepayable),
         dailyKist: loanType === 'EMI' ? dailyKist : null,
         dueDate: loanType === 'FIXED' ? formData.dueDate : null,
+        security: formData.security,
         startDate: formData.startDate,
         initialPaidAmount: Number(formData.initialPaidAmount) || 0,
         // Map 'days' only for EMI to avoid NaN in the 
@@ -259,6 +266,18 @@ const AddLoan = ({ onCancel, onAddClient }) => {
                     <input type="date" value={formData.dueDate} onChange={(e) => setFormData({ ...formData, dueDate: e.target.value })} className="w-full bg-white/5 border border-white/10 p-3 px-4 mt-2 rounded-[28px] text-white outline-none focus:ring-2 focus:ring-emerald-500/20 font-bold" />
                   </div>
                 )}
+
+                {/* Security Field */}
+                  <div className="space-y-2">
+                    <label className="text-[9px] font-black text-white/30 uppercase tracking-[0.3em] ml-3">Security / Note</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Cheque No. 12345 or Gold Ring"
+                      value={formData.security}
+                      onChange={(e) => setFormData({ ...formData, security: e.target.value })}
+                      className="w-full bg-white/5 border border-white/10 p-3 px-4 mt-2 rounded-[28px] text-white outline-none focus:ring-2 focus:ring-emerald-500/20 italic font-bold"
+                    />
+                  </div>
 
                 <div className="p-6 px-7 bg-emerald-500/10 border border-emerald-500/20 rounded-[40px] shadow-inner space-y-4">
                   {/* Top Row: Primary Calculation */}

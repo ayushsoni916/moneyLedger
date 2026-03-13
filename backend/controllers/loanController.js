@@ -5,7 +5,7 @@ exports.addLoan = async (req, res) => {
   try {
     const {
       clientId, type, principal, totalRepayable,
-      dailyKist, dueDate, startDate, initialPaidAmount, days
+      dailyKist, dueDate, startDate, initialPaidAmount, days, security
     } = req.body;
 
     // Build base object with common fields
@@ -15,6 +15,7 @@ exports.addLoan = async (req, res) => {
       principal: Number(principal),
       totalRepayable: Number(totalRepayable),
       startDate: startDate || Date.now(),
+      security: security || "",
       // Handle imported balance logic
       paidAmount: type === 'EMI'
         ? (Number(initialPaidAmount || 0) * Number(dailyKist || 0))
@@ -34,7 +35,7 @@ exports.addLoan = async (req, res) => {
     if (loanData.paidAmount > 0) {
       loanData.history = [{
         amount: loanData.paidAmount,
-        date: Date.now(),
+        date: startDate || Date.now(),
         paymentType: 'Partial',
         note: 'Imported starting balance'
       }];
@@ -66,7 +67,7 @@ exports.getCollections = async (req, res) => {
       // NEXT DAY LOGIC: Subtract 1 so today (Day 0) returns 0 elapsed days
       const daysSinceStart = Math.floor((today - start) / (1000 * 60 * 60 * 24));
       const elapsedDays = daysSinceStart > 0 ? daysSinceStart : 0;
-      
+
       let currentDue = 0;
       let isOverdue = false;
 
@@ -89,7 +90,6 @@ exports.getCollections = async (req, res) => {
   }
 };
 
-// @desc    Record a payment (Receive Full or Custom/Partial)
 exports.recordPayment = async (req, res) => {
   try {
     const { amount, note } = req.body;
@@ -98,19 +98,44 @@ exports.recordPayment = async (req, res) => {
     if (!loan) return res.status(404).json({ message: "Loan not found" });
 
     const paymentAmount = Number(amount);
-    
-    // 1. Add to total paid
+    let calculatedPaymentType = 'Partial';
+
+    // 1. Determine Payment Type Logic
+    if (loan.type === 'EMI') {
+      const kist = loan.dailyKist || 0;
+
+      if (paymentAmount > kist) {
+        calculatedPaymentType = 'Advance';
+      } else if (paymentAmount === kist) {
+        calculatedPaymentType = 'Full';
+      } else {
+        calculatedPaymentType = 'Partial';
+      }
+    } else {
+      // For FIXED loans, compare against the total remaining balance
+      const remainingBalance = loan.totalRepayable - loan.paidAmount;
+
+      if (paymentAmount > remainingBalance) {
+        calculatedPaymentType = 'Advance';
+      } else if (paymentAmount === remainingBalance) {
+        calculatedPaymentType = 'Full';
+      } else {
+        calculatedPaymentType = 'Partial';
+      }
+    }
+
+    // 2. Add to total paid
     loan.paidAmount += paymentAmount;
 
-    // 2. Add to history ledger
+    // 3. Add to history ledger with the calculated type
     loan.history.push({
       amount: paymentAmount,
       date: Date.now(),
-      paymentType: 'Partial',
+      paymentType: calculatedPaymentType,
       note: note || (loan.type === 'EMI' ? 'Daily Collection' : 'Fixed Repayment')
     });
 
-    // 3. Auto-settle if the debt is cleared
+    // 4. Auto-settle if the debt is cleared
     if (loan.paidAmount >= loan.totalRepayable) {
       loan.status = 'Settled';
     }
@@ -118,6 +143,7 @@ exports.recordPayment = async (req, res) => {
     await loan.save();
     res.status(200).json(loan);
   } catch (error) {
+    console.error("Payment Recording Error:", error);
     res.status(500).json({ message: error.message });
   }
 };
@@ -163,7 +189,7 @@ exports.getLoanHistory = async (req, res) => {
 
     // Filter by Search (Client Name)
     if (search) {
-      allHistory = allHistory.filter(item => 
+      allHistory = allHistory.filter(item =>
         item.clientName.toLowerCase().includes(search.toLowerCase())
       );
     }
@@ -179,48 +205,97 @@ exports.getDashboardStats = async (req, res) => {
     const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
     const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
 
-    const activeLoans = await Loan.find({ status: 'Active' }).populate('clientId', 'name');
-    let targetToday = 0;
-    let receivedToday = 0;
+    const activeLoans = await Loan.find({ status: 'Active' }).populate('clientId', 'name phone');
+    
+    let targetEMI = 0, receivedEMI = 0;
+    let targetFixed = 0, receivedFixed = 0;
     let totalMarketCap = 0;
+    
+    const overdueAlerts = [];
+    const upcomingKists = [];
 
     activeLoans.forEach(loan => {
-      totalMarketCap += loan.principal;
-      const start = new Date(loan.startDate);
-      // NEXT DAY LOGIC
-      const daysSinceStart = Math.floor((new Date() - start) / (1000 * 60 * 60 * 24));
-      const elapsedDays = daysSinceStart > 0 ? daysSinceStart : 0;
+      totalMarketCap += (loan.principal || 0);
 
-      if (loan.type === 'EMI') {
-        const expectedByToday = elapsedDays * loan.dailyKist;
-        const unpaid = expectedByToday - loan.paidAmount;
-        const dueToday = unpaid > 0 ? (unpaid > loan.dailyKist ? loan.dailyKist : unpaid) : 0;
-        targetToday += dueToday;
-      } else if (loan.dueDate && new Date(loan.dueDate) <= new Date()) {
-        targetToday += (loan.totalRepayable - loan.paidAmount);
+      const start = new Date(loan.startDate);
+      start.setHours(0, 0, 0, 0);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const diffDays = Math.floor((today - start) / (1000 * 60 * 60 * 24));
+      
+      const hasPaidToday = loan.history.some(entry => 
+        new Date(entry.date) >= todayStart && new Date(entry.date) <= todayEnd
+      );
+
+      // --- 1. EMI TARGET (The "What I Want" Logic) ---
+      if (loan.type === 'EMI' && diffDays > 0) {
+        const kist = loan.dailyKist || 0;
+        const actualPaidCount = Math.floor(Math.max(0, loan.paidAmount) / kist);
+        
+        // Target: Even if they paid, we still "wanted" 1 kist today.
+        // If they missed 2 days previously, we "wanted" 3 kists total by tonight.
+        const totalExpectedByNow = diffDays;
+        const missedCount = totalExpectedByNow > actualPaidCount ? totalExpectedByNow - actualPaidCount : 0;
+
+        // CRITICAL FIX: The target for today is at least 1 Kist if the loan is active,
+        // plus any missed ones. We calculate this REGARDLESS of hasPaidToday.
+        // But we subtract today's payment from the target ONLY IF it was paid BEFORE today (Advance).
+        
+        const effectiveMissed = Math.max(0, totalExpectedByNow - actualPaidCount);
+        
+        // If they are NOT in advance, they contribute to today's target
+        if (actualPaidCount < diffDays) {
+           targetEMI += (effectiveMissed * kist);
+        } else if (hasPaidToday) {
+           // If they paid TODAY, they were part of today's target
+           targetEMI += kist;
+        }
+
+        // Only show in lists if they still haven't cleared today's requirement
+        if (!hasPaidToday && actualPaidCount < diffDays) {
+          upcomingKists.push({ clientName: loan.clientId?.name, amount: kist, loanId: loan._id, type: 'EMI' });
+          if (effectiveMissed > 1) {
+            overdueAlerts.push({ clientName: loan.clientId?.name, amount: kist, days: effectiveMissed - 1, type: 'EMI' });
+          }
+        }
+      } 
+      
+      // --- 2. FIXED TARGET ---
+      else if (loan.type === 'FIXED') {
+        const isDueOrOverdue = loan.dueDate && new Date(loan.dueDate) <= todayEnd;
+        const remainingAtStartOfToday = loan.totalRepayable - (loan.paidAmount - (hasPaidToday ? loan.history.find(h => h.date >= todayStart).amount : 0));
+
+        if (isDueOrOverdue && remainingAtStartOfToday > 0) {
+          targetFixed += remainingAtStartOfToday;
+
+          if (!hasPaidToday) {
+            upcomingKists.push({ clientName: loan.clientId?.name, amount: remainingAtStartOfToday, loanId: loan._id, type: 'FIXED' });
+            overdueAlerts.push({ clientName: loan.clientId?.name, amount: remainingAtStartOfToday, isFixed: true, type: 'FIXED' });
+          }
+        }
       }
     });
 
-    // Calculate Received
-    const loansWithTodayHistory = await Loan.find({ "history.date": { $gte: todayStart, $lte: todayEnd } });
-    loansWithTodayHistory.forEach(loan => {
+    // --- 3. RECEIVED TODAY ---
+    const historyToday = await Loan.find({ "history.date": { $gte: todayStart, $lte: todayEnd } });
+    historyToday.forEach(loan => {
       loan.history.forEach(entry => {
-        if (entry.date >= todayStart && entry.date <= todayEnd) receivedToday += entry.amount;
+        if (entry.date >= todayStart && entry.date <= todayEnd) {
+          if (loan.type === 'EMI') receivedEMI += entry.amount;
+          else if (loan.type === 'FIXED') receivedFixed += entry.amount;
+        }
       });
     });
 
-    // FIX: Math.max(0, ...) ensures "Left" never goes below zero
-    const pendingToday = Math.max(0, targetToday - receivedToday);
-
     res.status(200).json({
-      targetToday,
-      receivedToday,
-      pendingToday, // Explicitly send this to frontend
+      emi: { target: targetEMI, received: receivedEMI, pending: Math.max(0, targetEMI - receivedEMI) },
+      fixed: { target: targetFixed, received: receivedFixed, pending: Math.max(0, targetFixed - receivedFixed) },
       totalMarketCap,
-      totalClients: await Client.countDocuments(),
       activeLoansCount: activeLoans.length,
-      overdueAlerts: [], // (Populate as per previous logic)
-      upcomingKists: []  // (Populate as per previous logic)
+      totalClients: await Client.countDocuments(),
+      overdueAlerts,
+      upcomingKists
     });
   } catch (error) {
     res.status(500).json({ message: error.message });

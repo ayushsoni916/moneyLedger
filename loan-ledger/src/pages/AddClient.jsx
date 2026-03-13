@@ -80,7 +80,8 @@ const AddClient = ({ onCancel, onSuccess }) => {
               type="tel"
               value={formData.phone}
               onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-              placeholder="+91 00000 00000"
+              placeholder="9999999999"
+              maxLength={10}
               className="w-full bg-white/5 border border-white/10 p-3 pl-14 rounded-[30px] text-white outline-none focus:ring-2 focus:ring-[#4ade80]/20 transition-all placeholder:text-white/10 italic font-medium shadow-inner"
             />
           </div>

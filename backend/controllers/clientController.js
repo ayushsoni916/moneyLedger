@@ -41,30 +41,38 @@ exports.getClientProfile = async (req, res) => {
     const loans = rawLoans.map(loan => {
       const loanObj = loan.toObject();
       const today = new Date();
-      const start = new Date(loan.startDate);
+      today.setHours(0, 0, 0, 0);
 
-      // NEXT DAY LOGIC: 
-      // Math.floor ensures that if less than 24 hours have passed, elapsedDays is 0.
-      // Example: Loan given today at 2 PM. Tomorrow at 3 PM, elapsedDays = 1.
-      const elapsedDays = Math.floor((today - start) / (1000 * 60 * 60 * 24));
+      const start = new Date(loan.startDate);
+      start.setHours(0, 0, 0, 0);
+
+      // NEXT DAY LOGIC:
+      // We calculate the difference in days. If today is the same day as the start date, we consider 0 days have passed (Day 0). If today is the day after the start date, we consider 1 day has passed (Day 1), and so on.
+      // If today is Feb 2 and start is Feb 1, diffDays = 1.
+      const diffTime = today - start;
+      const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
 
       if (loan.type === 'EMI') {
         // Only start counting EMIs if at least 1 full day has passed
-        loanObj.expectedEmis = elapsedDays > 0 ? elapsedDays : 0;
-        
+        loanObj.expectedEmis = diffDays > 0 ? diffDays : 0;
+
         // Actual EMIs paid based on total money received
-        loanObj.actualEmisPaid = Math.floor(loan.paidAmount / loan.dailyKist);
-        
+        loanObj.actualEmisPaid = loan.dailyKist > 0
+          ? Math.floor(loan.paidAmount / loan.dailyKist)
+          : 0;
+
         // Calculate missed EMIs
         loanObj.missedEmis = loanObj.expectedEmis > loanObj.actualEmisPaid
           ? loanObj.expectedEmis - loanObj.actualEmisPaid
           : 0;
-          
+
         // Defaulted if they have missed at least 1 EMI
         loanObj.isDefaulted = loanObj.missedEmis > 0;
       } else {
-        // Fixed Loan Logic: Defaulted if today is past dueDate and not fully paid
-        const isPastDue = loan.dueDate && today > new Date(loan.dueDate);
+        const dueDate = loan.dueDate ? new Date(loan.dueDate) : null;
+        if (dueDate) dueDate.setHours(0, 0, 0, 0);
+
+        const isPastDue = dueDate && today > dueDate;
         const isUnpaid = loan.paidAmount < loan.totalRepayable;
         loanObj.isDefaulted = isPastDue && isUnpaid;
       }
@@ -73,10 +81,7 @@ exports.getClientProfile = async (req, res) => {
 
     // --- PRIORITY SORTING ---
     // Defaulted (Missed/Overdue) loans move to the top of the profile list
-    loans.sort((a, b) => {
-      if (a.isDefaulted === b.isDefaulted) return 0;
-      return a.isDefaulted ? -1 : 1; 
-    });
+   loans.sort((a, b) => (b.isDefaulted - a.isDefaulted));
 
     res.status(200).json({ client, loans });
   } catch (error) {

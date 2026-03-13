@@ -12,6 +12,7 @@ const loanSchema = new mongoose.Schema({
   dueDate: { type: Date },
   paidAmount: { type: Number, default: 0 },
   status: { type: String, enum: ['Active', 'Settled'], default: 'Active' },
+  security: { type: String, trim: true },
   history: [{
     amount: Number,
     date: { type: Date, default: Date.now },

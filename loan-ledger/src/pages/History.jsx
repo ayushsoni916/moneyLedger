@@ -8,7 +8,21 @@ const History = () => {
   const [loading, setLoading] = useState(true);
   const [history, setHistory] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
-  const [selectedMonth, setSelectedMonth] = useState('February 2026');
+
+  // 1. GENERATE DYNAMIC MONTHS
+  const generateMonths = () => {
+    const months = [];
+    for (let i = 0; i < 4; i++) {
+      const d = new Date();
+      d.setMonth(d.getMonth() - i);
+      const label = d.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+      months.push(label);
+    }
+    return months;
+  };
+
+  const monthOptions = generateMonths();
+  const [selectedMonth, setSelectedMonth] = useState(monthOptions[0]);
 
   const fetchHistory = async () => {
     setLoading(true);
@@ -46,7 +60,7 @@ const History = () => {
           <h2 className="text-3xl font-black italic text-white tracking-tighter uppercase leading-none">History</h2>
           <p className="text-white/30 text-[10px] font-black uppercase tracking-[0.3em] mt-3">{selectedMonth}</p>
         </div>
-        <button 
+        <button
           onClick={() => setShowCalendar(true)}
           className={`p-4 rounded-2xl border transition-all duration-300 ${showCalendar ? 'bg-emerald-500 border-emerald-500 text-[#1A1A2E]' : 'bg-white/5 border-white/10 text-white/60'}`}
         >
@@ -56,9 +70,9 @@ const History = () => {
 
       <div className="relative mb-12">
         <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-white/20" size={20} />
-        <input 
-          type="text" 
-          placeholder="Search client..." 
+        <input
+          type="text"
+          placeholder="Search client..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           className="w-full bg-white/5 border border-white/10 p-5 pl-14 rounded-[30px] text-white outline-none focus:ring-2 focus:ring-emerald-500/20 italic"
@@ -70,11 +84,11 @@ const History = () => {
           <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="absolute top-24 left-6 right-6 z-50 bg-brand-dark/95 backdrop-blur-3xl border border-white/20 p-8 rounded-[40px] shadow-2xl">
             <div className="flex justify-between items-center mb-6">
               <p className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.3em]">Timeline Filter</p>
-              <button onClick={() => setShowCalendar(false)} className="text-white/40"><X size={20}/></button>
+              <button onClick={() => setShowCalendar(false)} className="text-white/40"><X size={20} /></button>
             </div>
             <div className="grid grid-cols-1 gap-3">
-              {['February 2026', 'January 2026', 'December 2025'].map((month) => (
-                <button 
+              {monthOptions.map((month) => (
+                <button
                   key={month}
                   onClick={() => { setSelectedMonth(month); setShowCalendar(false); }}
                   className={`flex justify-between items-center p-4 rounded-2xl text-xs font-bold transition-all ${selectedMonth === month ? 'bg-emerald-500 text-[#1A1A2E]' : 'bg-white/5 text-white border border-white/5'}`}
@@ -96,15 +110,15 @@ const History = () => {
             <p className="text-[10px] font-black text-white/20 uppercase tracking-[0.5em] mb-8 pl-2 italic">{date}</p>
             <div className="space-y-5">
               {groupedHistory[date].map((item) => (
-                <HistoryItem 
+                <HistoryItem
                   key={item._id}
-                  name={item.clientName} 
-                  amount={item.amount} 
-                  type={item.loanType} 
-                  status={item.paymentType} 
+                  name={item.clientName}
+                  amount={item.amount}
+                  type={item.loanType}
+                  status={item.paymentType}
                   dateLabel={new Date(item.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
                   time={new Date(item.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  isSettlement={item.status === 'Settled'} 
+                  isSettlement={item.status === 'Settled'}
                 />
               ))}
             </div>

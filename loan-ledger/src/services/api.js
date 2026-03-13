@@ -2,7 +2,8 @@ import axios from 'axios';
 
 // Base configuration for your local Node.js server
 const API = axios.create({
-  baseURL: 'https://mplloid.com/money-api/api',
+  // baseURL: 'https://mplloid.com/money-api/api',
+  baseURL: 'http://192.168.1.46:4700/api',
   timeout: 10000, // 10 seconds
 });
 
